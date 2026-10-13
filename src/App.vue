@@ -190,6 +190,12 @@
       @close="closeContextMenu"
     />
 
+    <AutoCorrectDialog
+      :is-open="autoCorrectDialogOpen"
+      :options="autoCorrectOptions"
+      @close="autoCorrectDialogOpen = false"
+      @apply="onAutoCorrectDialogApply"
+    />
     <LinkDialog
       :is-open="linkDialog.isOpen.value"
       :has-range="linkDialog.selection.value.hasRange"
@@ -398,6 +404,7 @@ import {
   READOUT_SELECTION,
   SPELLCHECK,
   AUTOCORRECT,
+  type AutoCorrectControl,
   STYLE_GALLERY,
 } from './composables/keys';
 import { ACTIVE_SUPERDOC } from './engine/document-api';
@@ -494,6 +501,8 @@ import { installBookCompletion } from './engine/book-completion-overlay';
 import { installAtMention } from './engine/at-mention-overlay';
 import { installListAutoformat } from './engine/list-autoformat-install';
 import { installAutoCorrect } from './engine/autocorrect-install';
+import { stopCorrecting } from './engine/autocorrect-indicator';
+import AutoCorrectDialog from './ui/panels/AutoCorrectDialog.vue';
 import {
   DEFAULT_AUTOCORRECT,
   DEFAULT_REPLACEMENTS,
@@ -1414,7 +1423,9 @@ provide(SPELLCHECK, {
  * נשמר ב-`storage` ולא בזיכרון: זו העדפה של המשתמש, לא של המסמך.
  */
 const autoCorrectOptions = ref<AutoCorrectOptions>(DEFAULT_AUTOCORRECT);
-provide(AUTOCORRECT, {
+/** עולה בכל בקשה לפתוח את דיאלוג התיקון האוטומטי מתוך המסמך (תפריט הסימון). */
+const autoCorrectDialogRequest = ref(0);
+const autoCorrectControl: AutoCorrectControl = {
   options: autoCorrectOptions,
   apply: (options: AutoCorrectOptions) => {
     autoCorrectOptions.value = options;
@@ -1423,7 +1434,17 @@ provide(AUTOCORRECT, {
     const { replacements, ...rest } = options;
     void saveAutoCorrect(sameEntries(replacements, DEFAULT_REPLACEMENTS) ? rest : options);
   },
+};
+provide(AUTOCORRECT, autoCorrectControl);
+/** דיאלוג שנפתח מתפריט הסימון; זה של לשונית „סקירה” נפרד ונפתח רק משם. */
+const autoCorrectDialogOpen = ref(false);
+watch(autoCorrectDialogRequest, () => {
+  autoCorrectDialogOpen.value = true;
 });
+function onAutoCorrectDialogApply(options: AutoCorrectOptions): void {
+  autoCorrectControl.apply(options);
+  autoCorrectDialogOpen.value = false;
+}
 
 /**
  * „הוסף למילון” מתפריט ההקשר. המילה נשמרת ב-`storage` (רשימת המשתמש בלבד,
@@ -4522,6 +4543,15 @@ watch([activeEditorContainer, activeSuperdoc, documentGeneration], () => {
     host: activeSuperdoc.value,
     getOptions: () => autoCorrectOptions.value,
     isSuppressed: isModalDialogOpen,
+    // תפריט הסימון שליד המילה שהוחלפה (כמו ב-Word): „הפסק לתקן” שומר דרך אותו
+    // מסלול של הדיאלוג, ו„שליטה באפשרויות” פותח אותו.
+    onStopCorrecting: (fix) => {
+      const next = stopCorrecting(autoCorrectOptions.value, fix);
+      if (next !== autoCorrectOptions.value) autoCorrectControl.apply(next);
+    },
+    onOpenOptions: () => {
+      autoCorrectDialogRequest.value += 1;
+    },
   });
 });
 
